@@ -1,0 +1,178 @@
+#!/bin/bash
+# /etc/init.d/avorion
+# version 1.0.0 2018-03-31 (YYYY-MM-DD)
+
+### BEGIN INIT INFO
+# Provides:       AvorionServer
+# Required-Start: $local_fs $remote_fs
+# Required-Stop:  $local_fs $remote_fs
+# Should-Start:   $network
+# Should-Stop:    $network
+# Default-Start:  2 3 4 5
+# Default-Stop:   0 1 6
+# Short-Description: Avorion Server
+# Description:    Startup and maintenance script for the Avorion server
+### END INIT INFO
+
+# Docs:          https://avorion.gamepedia.com/Setting_up_a_server
+# 64bit SteamID: https://steamidfinder.com/
+
+#Settings
+USERNAME='steam'
+GALAXY_NAME='quest'
+ADMIN_STEAM_ID=''
+# steam_id:     12345678901234567
+DATA_PATH='/home/steam/avorion-galaxy-quest'
+AVORION_DIR='/home/steam/avorion'
+
+#
+# no changes required below
+#
+SERVICE='AvorionServer'
+AVORION_RUN="./server.sh --galaxy-name $GALAXY_NAME --admin $ADMIN_STEAM_ID --datapath $DATA_PATH"
+# nohup ./server.sh --galaxy-name quest --admin 76561197961541823 --datapath /home/steam/avorion-galaxy-quest/ &
+
+BACKUP_DIR='/home/steam/ftp/backups'
+
+
+ME=`whoami`
+as_user() {
+  if [ $ME == $USERNAME ] ; then
+    bash -c "$1"
+  else
+    su - $USERNAME -c "$1"
+  fi
+}
+
+av_start() {
+  if  pgrep -u $USERNAME -f $SERVICE > /dev/null
+  then
+    echo "$SERVICE is already running!"
+  else
+    echo "Starting $SERVICE..."
+    as_user "cd $AVORION_DIR && screen -L -dmS AVORION $AVORION_RUN > $AVORION_DIR/screen.log"
+    sleep 7
+    if pgrep -u $USERNAME -f $SERVICE > /dev/null
+    then
+      echo "$SERVICE is now running."
+    else
+      echo "Error! Could not start $SERVICE!"
+    fi
+  fi
+}
+
+av_stop() {
+  if pgrep -u $USERNAME -f $SERVICE > /dev/null
+  then
+    echo "Stopping $SERVICE"
+    as_user "screen -p 0 -S AVORION -X eval 'stuff \"/say SERVER SHUTTING DOWN IN 10 SECONDS. Saving galaxy...\"\015'"
+    as_user "screen -p 0 -S AVORION -X eval 'stuff \"/save\"\015'"
+    sleep 10
+    as_user "screen -p 0 -S AVORION -X eval 'stuff \"/stop\"\015'"
+    sleep 7
+  else
+    echo "$SERVICE was not running."
+  fi
+  if pgrep -u $USERNAME -f $SERVICE > /dev/null
+  then
+    echo "Error! $SERVICE could not be stopped."
+  else
+    echo "$SERVICE is stopped."
+  fi
+}
+
+av_update() {
+  if pgrep -u $USERNAME -f $SERVICE > /dev/null
+  then
+    echo "$SERVICE is running! Will not start update."
+  else
+    # Default: steamcmd.exe +login anonymous +force_install_dir <SERVER_PATH> +app_update 565060 validate +exit
+    # Beta: steamcmd.exe +login anonymous +force_install_dir <SERVER_PATH> +app_update 565060 -beta beta validate +exit
+    as_user "cd $AVORION_DIR && steamcmd +login anonymous +force_install_dir $AVORION_DIR +app_update 565060 validate +exit"
+  fi
+}
+
+av_backup() {
+   echo "Backing up galaxy $GALAXY_NAME ..."
+   as_user "mkdir -p $BACKUP_DIR"
+
+   SUFFIX=`eval date +%Y-%m-%d_%H_%M_%S`
+   FILENAME=$BACKUP_DIR/galaxy_$GALAXY_NAME-$SUFFIX.tgz
+   FOLDERSIZE=`du -h -s $1 | sed s/[[:space:]][^$]*//`
+   echo "  Create archive at: $FILENAME"
+
+   as_user "tar -czf $FILENAME $DATA_PATH/$GALAXY_NAME 2>/dev/null"
+   echo "Galaxy Backup complete."
+}
+
+av_save() {
+  if pgrep -u $USERNAME -f $SERVICE > /dev/null
+  then
+    echo "$SERVICE is running... execute save..."
+    as_user "screen -p 0 -S AVORION -X eval 'stuff \"/save\"\015'"
+    sleep 10
+  else
+    echo "Server is not running."
+  fi
+}
+
+av_command() {
+  if [ "$1" ]
+  then
+    command="$1";
+    if pgrep -u $USERNAME -f $SERVICE > /dev/null
+    then
+      echo "$SERVICE is running... executing command"
+      as_user "screen -p 0 -S AVORION -X eval 'stuff \"$command\"\015'"
+    fi
+    else
+      echo "Must specify server command, use quote and start commands with a /"
+  fi
+}
+
+
+
+#Start-Stop here
+case "$1" in
+  start)
+    av_start
+    ;;
+  stop)
+    av_stop
+    ;;
+  restart)
+    av_stop
+    av_start
+    ;;
+  update)
+    av_save
+    av_stop
+    av_backup
+    av_update
+    av_start
+    ;;
+  backup)
+    av_save
+    av_stop
+    av_backup
+    av_start
+    ;;
+  status)
+    if pgrep -u $USERNAME -f $SERVICE > /dev/null
+    then
+      echo "$SERVICE is running."
+    else
+      echo "$SERVICE is not running."
+    fi
+    ;;
+  command)
+    av_command "$2"
+    ;;
+
+  *)
+  echo "Usage: /etc/init.d/avorion {start|stop|update|backup|status|restart|command \"server command\"}"
+  exit 1
+  ;;
+esac
+
+exit 0
